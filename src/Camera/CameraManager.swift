@@ -220,8 +220,8 @@ final class CameraManager: NSObject, ObservableObject {
 
 extension AppSettings.CameraSelection {
     /// Список камер, реально доступных на устройстве
-    static var availableCameras: [CameraSelection] {
-        var result: [CameraSelection] = []
+    static var availableCameras: [AppSettings.CameraSelection] {
+        var result: [AppSettings.CameraSelection] = []
         if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil { result.append(.back) }
         if AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) != nil { result.append(.ultraWide) }
         if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) != nil { result.append(.front) }
