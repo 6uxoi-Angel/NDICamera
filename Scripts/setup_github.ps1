@@ -58,21 +58,32 @@ if ($LASTEXITCODE -ne 0) {
 }
 Ok 'Репозиторий создан, код запушен'
 
-# 5. Секреты
+# 5. Подпись: по умолчанию — AltStore (не нужны секреты/Team ID)
 Say ''
-Say '[3/5] Секреты для подписи (бесплатный Apple ID).'
-Say '  - Apple ID: твой email от Apple'
-Say '  - Пароль приложения: создай на https://appleid.apple.com -> "Пароли для приложений"'
-Say '  - Team ID: https://appleid.apple.com -> Account -> Membership'
-$appleId = Read-Host 'Apple ID (email)'
-$applePass = Read-Host 'Пароль приложения' -AsSecureString
-$teamId = Read-Host 'Team ID'
-$plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($applePass))
-& $gh secret set APPLE_ID --body $appleId
-if ($LASTEXITCODE -ne 0) { Fail 'Не удалось задать APPLE_ID' }
-& $gh secret set APPLE_APP_SPECIFIC_PASSWORD --body $plain
-& $gh secret set TEAM_ID --body $teamId
-Ok 'Секреты заданы'
+Say '[3/5] Подпись приложения.'
+Say '  Рекомендуемый путь: AltStore (бесплатно, Windows) — подписывает IPA'
+Say '  твоим бесплатным Apple ID без Team ID. Тогда секреты не нужны.'
+Say '  Альтернатива: fastlane-подпись на самом раннере (требует Team ID,'
+Say '  часто не работает с бесплатными Apple ID).'
+$needSigned = Read-Host 'Попробовать fastlane-подпись? (y/N)'
+if ($needSigned -match '^[yYдД]') {
+    Say '  - Apple ID: твой email от Apple'
+    Say '  - Пароль приложения: создай на https://appleid.apple.com ->'
+    Say '    "Вход и безопасность" -> "Пароли приложений" -> "Подробнее"'
+    Say '  - Team ID: обычно недоступен для бесплатного аккаунта; можно'
+    Say '    попробовать с пустым значением (узнай в Xcode, если есть доступ)'
+    $appleId = Read-Host 'Apple ID (email)'
+    $applePass = Read-Host 'Пароль приложения' -AsSecureString
+    $teamId = Read-Host 'Team ID (пусто = не указывать)'
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($applePass))
+    & $gh secret set APPLE_ID --body $appleId
+    if ($LASTEXITCODE -ne 0) { Fail 'Не удалось задать APPLE_ID' }
+    & $gh secret set APPLE_APP_SPECIFIC_PASSWORD --body $plain
+    & $gh secret set TEAM_ID --body $teamId
+    Ok 'Секреты заданы (сборка попробует подписать; если не выйдет — используй AltStore)'
+} else {
+    Ok 'Подпись через AltStore — секреты не задаются'
+}
 
 # 6. Запуск сборки
 Say ''
@@ -89,12 +100,12 @@ Say ''
 Say '============================================================'
 Say ' ДАЛЬШЕ:'
 Say '  1) Дождись завершения (5-15 минут в первый раз).'
-Say '  2) Скачай артефакт NDICamera-signed.ipa со страницы Actions.'
-Say '  3) Отправь его на iPhone (AirDrop/почта/файлы).'
-Say '  4) На iPhone: Настройки -> Основные -> Управление VPN и'
-Say '      устройствами -> Доверять разработчику.'
-Say '  5) Открой .ipa - приложение установится.'
-Say '  6) ВАЖНО: бесплатная подпись живёт 7 ДНЕЙ. Раз в неделю'
-Say '      заходи в Actions, жми "Run workflow" и переустанавливай IPA.'
+Say '  2) Скачай артефакт NDICamera-unsigned (файл .ipa) со страницы Actions.'
+Say '  3) Установи AltStore на Windows: https://altstore.io (бесплатно).'
+Say '  4) iPhone по USB -> AltServer -> Install AltStore на iPhone.'
+Say '  5) В AltStore на iPhone: вкладка My Apps -> "+" (сверху слева) ->'
+Say '      выбери .ipa -> войди своим Apple ID -> приложение установится.'
+Say '  6) ВАЖНО: AltStore сам продлевает бесплатную подпись (7 дней)'
+Say '      при работающем AltServer на ПК и iPhone в одной сети/USB.'
 Say '============================================================'
 Read-Host 'Готово. Нажми Enter для закрытия'
