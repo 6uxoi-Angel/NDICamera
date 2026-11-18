@@ -112,7 +112,7 @@
         v.fourcc_type = NDIlib_FOURCC_TYPE_H264;
         v.timestamp = timestampUs;
         v.p_metadata = NULL;
-        NDIlib_send_video_async_v2(_sender, &v);
+        NDIlib_send_send_video_async_v2(_sender, &v);
     });
 }
 
@@ -121,7 +121,7 @@
            sampleRate:(int)sampleRate
            timestampUs:(int64_t)timestampUs {
     if (!_open || !_sender || pcm.length == 0) return;
-    int noSamples = (int)(pcm.length / (channels * 2));
+    int noSamples = (int)(pcm.length / (channels * 4)); // float32 планар
 
     dispatch_async(_sendQueue, ^{
         NDIlib_audio_frame_v3_t a;
@@ -129,11 +129,12 @@
         a.sample_rate = sampleRate;
         a.no_channels = channels;
         a.no_samples = noSamples;
+        a.FourCC = NDIlib_FourCC_audio_type_FLTP;
         a.p_data = (uint8_t*)pcm.bytes;
-        a.channel_stride_in_bytes = noSamples * 2;
+        a.channel_stride_in_bytes = noSamples * 4;
         a.timestamp = timestampUs;
         a.p_metadata = NULL;
-        NDIlib_send_audio_async(_sender, &a);
+        NDIlib_send_send_audio_v3(_sender, &a);
     });
 }
 
@@ -141,7 +142,7 @@
     if (!_open || !_tallyRecv) return nil;
 
     NDIlib_video_frame_v2_t video;
-    NDIlib_audio_frame_v2_t audio;
+    NDIlib_audio_frame_v3_t audio;
     NDIlib_metadata_frame_t meta;
     memset(&video, 0, sizeof(video));
     memset(&audio, 0, sizeof(audio));
@@ -165,7 +166,7 @@
             NDIlib_recv_free_video_v2(_tallyRecv, &video);
             break;
         case NDIlib_frame_type_audio:
-            NDIlib_recv_free_audio_v2(_tallyRecv, &audio);
+            NDIlib_recv_free_audio_v3(_tallyRecv, &audio);
             break;
         default:
             break;

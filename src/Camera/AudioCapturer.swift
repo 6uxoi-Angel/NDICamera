@@ -54,16 +54,12 @@ final class AudioCapturer {
         let chCount = Int(buffer.format.channelCount)
         guard chCount > 0 else { return }
 
-        // float32 → int16 interleaved
-        var pcm = Data(capacity: frameLen * chCount * 2)
-        for frame in 0..<frameLen {
-            for ch in 0..<chCount {
+        // NDI v3 / FLTP: float32 планар (сначала все сэмплы канала 0, затем канала 1...)
+        var pcm = Data(capacity: frameLen * chCount * 4)
+        for ch in 0..<chCount {
+            for frame in 0..<frameLen {
                 var sample = channelData[ch][frame]
-                if sample > 1.0 { sample = 1.0 }
-                if sample < -1.0 { sample = -1.0 }
-                let int16 = Int16(sample * 32767.0)
-                var le = int16.littleEndian
-                withUnsafeBytes(of: &le) { pcm.append(contentsOf: $0) }
+                withUnsafeBytes(of: &sample) { pcm.append(contentsOf: $0) }
             }
         }
         accumulator.append(pcm)
