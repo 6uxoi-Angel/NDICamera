@@ -11,11 +11,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// - targetIP: если не nil — ручной IP приёмника (для режима "Ручной IP")
 /// - discoveryServer: если не nil — адрес NDI Discovery Server (fallback для mDNS)
 /// - localIP: если не nil — локальный IP для выбора сетевого интерфейса
+/// Вернёт NO при неудаче; причина — в lastErrorMessage.
 - (BOOL)openWithName:(NSString*)name
               targetIP:(nullable NSString*)targetIP
        discoveryServer:(nullable NSString*)discoveryServer
-               localIP:(nullable NSString*)localIP
-                 error:(NSError**)error;
+               localIP:(nullable NSString*)localIP;
+
+/// Текст последней ошибки (после openWithName..., если вернулся NO).
+@property (nonatomic, readonly, copy) NSString *lastErrorMessage;
 
 - (void)close;
 - (BOOL)isOpen;

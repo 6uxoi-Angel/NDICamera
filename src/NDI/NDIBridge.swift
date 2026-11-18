@@ -42,14 +42,12 @@ final class NDIBridge: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             self.stopInternal()
-            var err: NSError?
             let ok = self.native.open(withName: config.name,
                                       targetIP: config.targetIP,
                                       discoveryServer: config.discoveryServer,
-                                      localIP: config.localIP,
-                                      error: &err)
+                                      localIP: config.localIP)
             if !ok {
-                AppLogger.error("NDI не запустился: \(err?.localizedDescription ?? "неизвестно")")
+                AppLogger.error("NDI не запустился: \(self.native.lastErrorMessage ?? "неизвестно")")
                 return
             }
             self.config = config
@@ -80,17 +78,15 @@ final class NDIBridge: ObservableObject {
         queue.async { [weak self] in
             guard let self, let cfg = self.config else { return }
             self.stopInternal()
-            var err: NSError?
             if self.native.open(withName: cfg.name,
                                 targetIP: cfg.targetIP,
                                 discoveryServer: cfg.discoveryServer,
-                                localIP: cfg.localIP,
-                                error: &err) {
+                                localIP: cfg.localIP) {
                 self.isRunning = true
                 self.startTallyPolling()
                 AppLogger.info("NDI: переподключение выполнено")
             } else {
-                AppLogger.error("NDI: переподключение не удалось: \(err?.localizedDescription ?? "")")
+                AppLogger.error("NDI: переподключение не удалось: \(self.native.lastErrorMessage ?? "")")
             }
         }
     }

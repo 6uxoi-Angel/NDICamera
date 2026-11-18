@@ -65,23 +65,24 @@ final class VideoEncoder {
         let attrs: [NSString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         ]
-        compressionSession = nil
+        var sessionOut: VTCompressionSession?
         status = VTCompressionSessionCreate(
             allocator: nil,
-            width: config.width,
-            height: config.height,
+            width: Int32(config.width),
+            height: Int32(config.height),
             codecType: kCMVideoCodecType_H264,
             encoderSpecification: nil,
-            sourceImageBufferAttributes: attrs,
+            imageBufferAttributes: attrs as CFDictionary,
             compressedDataAllocator: nil,
-            outputCallback: { (_, _, status, flags, sampleBuffer, refcon) in
+            outputCallback: { (refcon, _, status, flags, sampleBuffer) in
                 guard let refcon else { return }
                 let encoder = Unmanaged<VideoEncoder>.fromOpaque(refcon).takeUnretainedValue()
                 encoder.handleOutput(status: status, flags: flags, sampleBuffer: sampleBuffer)
             },
-            refcon: Unmanaged.passUnretained(self).toOpaque()
+            refcon: Unmanaged.passUnretained(self).toOpaque(),
+            compressionSessionOut: &sessionOut
         )
-        guard status == noErr, let session = compressionSession else {
+        guard status == noErr, let session = sessionOut else {
             AppLogger.error("VTCompressionSessionCreate: \(status)")
             return
         }

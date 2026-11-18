@@ -13,6 +13,7 @@
     BOOL _open;
     dispatch_queue_t _sendQueue;
     NSString *_sourceName;
+    NSString *_lastErrorMessage;
 }
 
 - (instancetype)init {
@@ -22,20 +23,21 @@
         _open = NO;
         _sender = NULL;
         _tallyRecv = NULL;
+        _lastErrorMessage = @"";
     }
     return self;
 }
 
+- (NSString*)lastErrorMessage { return _lastErrorMessage; }
+
 - (BOOL)openWithName:(NSString*)name
               targetIP:(NSString*)targetIP
        discoveryServer:(NSString*)discoveryServer
-               localIP:(NSString*)localIP
-                 error:(NSError**)error {
+               localIP:(NSString*)localIP {
     if (_open) return YES;
 
     if (!NDIlib_initialize()) {
-        if (error) *error = [NSError errorWithDomain:@"NDI" code:1
-            userInfo:@{NSLocalizedDescriptionKey: @"NDIlib_initialize() вернул false (лицензия/архитектура)"}];
+        _lastErrorMessage = @"NDIlib_initialize() вернул false (лицензия/архитектура)";
         return NO;
     }
 
@@ -53,8 +55,7 @@
 
     _sender = NDIlib_send_create(&create);
     if (!_sender) {
-        if (error) *error = [NSError errorWithDomain:@"NDI" code:2
-            userInfo:@{NSLocalizedDescriptionKey: @"NDIlib_send_create() не удался"}];
+        _lastErrorMessage = @"NDIlib_send_create() не удался";
         return NO;
     }
 
@@ -76,6 +77,7 @@
     rc.allow_video_fields = true;
     _tallyRecv = NDIlib_recv_create_v3(&rc);
 
+    _lastErrorMessage = @"";
     _open = YES;
     return YES;
 }
