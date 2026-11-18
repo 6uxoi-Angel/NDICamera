@@ -21,7 +21,7 @@ final class AudioCapturer {
         guard !isRunning else { return }
         // Активируем аудиосессию: без этого tap на некоторых устройствах падает
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try session.setActive(true)
 
         let input = engine.inputNode
