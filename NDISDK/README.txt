@@ -1,12 +1,10 @@
-СЮДА ПОЛОЖИ NDI SDK (iOS) ПЕРЕД ПЕРВОЙ СБОРКОЙ:
+NDI SDK 6.3.2 (iOS) УЖЕ в этом репозитории — в сжатом виде:
+  NDISDK\iOS-parts\part00.gz ... part06.gz
+Заголовки: NDISDK\include\ (17 файлов, в репозитории).
 
-  NDISDK\iOS\libndi_ios.a
-  NDISDK\include\Processing.NDI.Lib.h
-  NDISDK\include\Processing.NDI.Structs.h
-  NDISDK\include\Processing.NDI.Deprecated.h
-  ...и остальные заголовки из SDK\include
+Workflow собирает libndi_ios.a из частей автоматически (Scripts\split_join_sdk.py).
 
-Скачать БЕСПЛАТНО: https://ndi.video -> регистрация (бесплатно) -> NDI SDK -> iOS
-(архив ~100-200 МБ, содержит папки iOS/ и include/)
-
-Пока libndi_ios.a нет — workflow GitHub Actions остановится с понятной ошибкой.
+Если понадобится заменить SDK на другую версию:
+  1) положи новый libndi_ios.a в NDISDK\iOS\
+  2) запусти:  python Scripts\split_join_sdk.py --split
+  3) закоммить и запуши.
