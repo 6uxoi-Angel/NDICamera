@@ -147,6 +147,11 @@ final class AppModel: ObservableObject {
             AppLogger.error("Ручной режим: не указан IP компьютера")
             return
         }
+        // Если выбранная камера недоступна — откатываемся на основную заднюю
+        if !AppSettings.CameraSelection.availableCameras.contains(settings.camera) {
+            AppLogger.warn("Камера \(settings.camera.rawValue) недоступна — переключаюсь на заднюю")
+            settings.camera = .back
+        }
         do {
             try audio.prepare(rate: 48000)
             if settings.audioEnabled { try audio.start() }

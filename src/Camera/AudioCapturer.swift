@@ -19,18 +19,21 @@ final class AudioCapturer {
 
     func start() throws {
         guard !isRunning else { return }
+        // Активируем аудиосессию: без этого tap на некоторых устройствах падает
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setActive(true)
+
         let input = engine.inputNode
-        // Используем РОДНОЙ формат входного узла — любой кастомный формат
-        // может не совпасть и вызвать exception в installTap.
-        let fmt = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(1024), format: fmt) { [weak self] buffer, _ in
+        // format: nil — используем родной формат узла (гарантированно совместимо)
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(4096), format: nil) { [weak self] buffer, _ in
             self?.handle(buffer: buffer)
         }
         tapInstalled = true
         engine.prepare()
         try engine.start()
         isRunning = true
-        AppLogger.info("Аудио запущено: \(Int(fmt.sampleRate)) Гц, \(fmt.channelCount) каналов")
+        AppLogger.info("Аудио запущено: \(Int(input.outputFormat(forBus: 0).sampleRate)) Гц")
     }
 
     func stop() {

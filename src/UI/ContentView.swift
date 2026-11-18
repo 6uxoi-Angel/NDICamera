@@ -99,12 +99,13 @@ struct ContentView: View {
                     }
                 }
                 ControlButton(icon: "arrow.triangle.2.circlepath", label: "Камера") {
-                    switch model.settings.camera {
-                    case .front: model.settings.camera = .back
-                    case .back: model.settings.camera = .ultraWide
-                    case .ultraWide: model.settings.camera = .front
-                    }
-                    model.camera.switchCamera(to: model.settings.camera)
+                    let available = AppSettings.CameraSelection.availableCameras
+                    guard !available.isEmpty else { return }
+                    let current = model.settings.camera
+                    let idx = available.firstIndex(of: current) ?? 0
+                    let next = available[(idx + 1) % available.count]
+                    model.settings.camera = next
+                    model.camera.switchCamera(to: next)
                 }
             }
 

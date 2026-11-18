@@ -36,6 +36,15 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// Список камер, реально доступных на устройстве
+    static var availableCameras: [CameraSelection] {
+        var result: [CameraSelection] = []
+        if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil { result.append(.back) }
+        if AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) != nil { result.append(.ultraWide) }
+        if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) != nil { result.append(.front) }
+        return result
+    }
+
     func switchCamera(to position: AppSettings.CameraSelection) {
         queue.async { [weak self] in
             guard let self else { return }
