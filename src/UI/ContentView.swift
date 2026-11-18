@@ -139,7 +139,8 @@ struct ContentView: View {
     private var magnificationGesture: some Gesture {
         MagnificationGesture()
             .onChanged { value in
-                model.camera.setZoom(value.magnification)
+                // В новых SDK value — уже готовый коэффициент масштаба (CGFloat)
+                model.camera.setZoom(value)
             }
     }
 }

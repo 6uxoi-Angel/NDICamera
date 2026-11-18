@@ -47,7 +47,7 @@ final class NDIBridge: ObservableObject {
                                       discoveryServer: config.discoveryServer,
                                       localIP: config.localIP)
             if !ok {
-                AppLogger.error("NDI не запустился: \(self.native.lastErrorMessage ?? "неизвестно")")
+                AppLogger.error("NDI не запустился: \(self.native.lastErrorMessage)")
                 return
             }
             self.config = config
@@ -86,7 +86,7 @@ final class NDIBridge: ObservableObject {
                 self.startTallyPolling()
                 AppLogger.info("NDI: переподключение выполнено")
             } else {
-                AppLogger.error("NDI: переподключение не удалось: \(self.native.lastErrorMessage ?? "")")
+                AppLogger.error("NDI: переподключение не удалось: \(self.native.lastErrorMessage)")
             }
         }
     }

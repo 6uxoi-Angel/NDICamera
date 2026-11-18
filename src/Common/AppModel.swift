@@ -110,7 +110,6 @@ final class AppModel: ObservableObject {
     let encoder = VideoEncoder()
     let audio = AudioCapturer()
     let bridge = NDIBridge.shared
-    private var transport = TransportManager()
     private var cancellables = Set<AnyCancellable>()
 
     func setup() {
@@ -121,7 +120,7 @@ final class AppModel: ObservableObject {
         }
         bridge.onTally = { [weak self] t in self?.tally = t }
 
-        transport = TransportManager(settings: settings, bridge: bridge, stats: { [weak self] s in self?.stats = s })
+        let transport = TransportManager(settings: settings, bridge: bridge, stats: { [weak self] s in self?.stats = s })
         transport.attach()
 
         NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
