@@ -70,9 +70,16 @@
 }
 
 - (void)close {
-    if (_tallyRecv) { NDIlib_recv_destroy(_tallyRecv); _tallyRecv = NULL; }
-    if (_sender) { NDIlib_send_destroy(_sender); _sender = NULL; }
-    _open = NO;
+    // Сериализуем уничтожение: ждём завершения всех отправок
+    if (_sendQueue) {
+        dispatch_barrier_sync(_sendQueue, ^{
+            if (_tallyRecv) { NDIlib_recv_destroy(_tallyRecv); _tallyRecv = NULL; }
+            if (_sender) { NDIlib_send_destroy(_sender); _sender = NULL; }
+            _open = NO;
+        });
+    } else {
+        _open = NO;
+    }
     NDIlib_destroy();
 }
 
@@ -83,8 +90,10 @@
                 height:(int)height
              timestampUs:(int64_t)timestampUs {
     if (!_open || !_sender || payload.length == 0) return;
+    NDIlib_send_instance_t sender = _sender; // фиксируем инстанс
 
-    dispatch_async(_sendQueue, ^{
+    dispatch_barrier_async(_sendQueue, ^{
+        if (!sender) return;
         NDIlib_video_frame_v2_t v;
         memset(&v, 0, sizeof(v));
         v.xres = width;
@@ -97,7 +106,7 @@
         v.line_stride_in_bytes = width; // Y-строка; CbCr идёт сразу за Y
         v.timestamp = timestampUs;
         v.p_metadata = NULL;
-        NDIlib_send_send_video_async_v2(_sender, &v);
+        NDIlib_send_send_video_async_v2(sender, &v);
     });
 }
 
@@ -107,8 +116,10 @@
            timestampUs:(int64_t)timestampUs {
     if (!_open || !_sender || pcm.length == 0) return;
     int noSamples = (int)(pcm.length / (channels * 4)); // float32 планар
+    NDIlib_send_instance_t sender = _sender;
 
-    dispatch_async(_sendQueue, ^{
+    dispatch_barrier_async(_sendQueue, ^{
+        if (!sender) return;
         NDIlib_audio_frame_v3_t a;
         memset(&a, 0, sizeof(a));
         a.sample_rate = sampleRate;
@@ -119,7 +130,7 @@
         a.channel_stride_in_bytes = noSamples * 4;
         a.timestamp = timestampUs;
         a.p_metadata = NULL;
-        NDIlib_send_send_audio_v3(_sender, &a);
+        NDIlib_send_send_audio_v3(sender, &a);
     });
 }
 

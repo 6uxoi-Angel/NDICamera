@@ -153,13 +153,21 @@ final class AppModel: ObservableObject {
             settings.camera = .back
         }
         do {
+            AppLogger.info("[stage] подготовка аудио...")
             try audio.prepare(rate: 48000)
-            if settings.audioEnabled { try audio.start() }
+            if settings.audioEnabled {
+                AppLogger.info("[stage] запуск аудио-tap...")
+                try audio.start()
+                AppLogger.info("[stage] аудио запущено")
+            }
         } catch {
             AppLogger.error("Аудио: \(error.localizedDescription)")
         }
+        AppLogger.info("[stage] старт NDI-моста...")
         bridge.start(config: BridgeConfig(settings: settings))
+        AppLogger.info("[stage] NDI-мост запущен, старт видео...")
         encoder.start(config: EncoderConfig(settings: settings))
+        AppLogger.info("[stage] камера стартует...")
         camera.startStream(settings: settings)
         isStreaming = true
         if settings.keepAwake { UIApplication.shared.isIdleTimerDisabled = true }
