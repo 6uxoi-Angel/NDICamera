@@ -25,9 +25,15 @@ targets:
           - Info.plist
     info:
       path: src/Info.plist
+      properties:
+        NSCameraUsageDescription: "Камера используется для передачи видео в OBS по NDI."
+        NSMicrophoneUsageDescription: "Микрофон используется для передачи звука в OBS по NDI."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ndicamera.app
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_NSCameraUsageDescription: "Камера используется для передачи видео в OBS по NDI."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Микрофон используется для передачи звука в OBS по NDI."
         OTHER_LDFLAGS: [ "$(inherited)", "-ObjC", "-lndi_ios", "-framework", "VideoToolbox", "-framework", "AVFoundation", "-framework", "Accelerate", "-framework", "Security" ]
         LIBRARY_SEARCH_PATHS: [ "$(PROJECT_DIR)/NDISDK/iOS" ]
         HEADER_SEARCH_PATHS: [ "$(PROJECT_DIR)/NDISDK/include" ]
