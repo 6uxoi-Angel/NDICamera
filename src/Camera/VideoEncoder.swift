@@ -85,16 +85,16 @@ final class VideoEncoder {
             AppLogger.error("VTCompressionSessionCreate: \(status)")
             return
         }
-        // Параметры кодирования
+        // Параметры кодирования (значения — CFTypeRef: CFNumber/CFBoolean)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: config.realTime)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: config.bitrate)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: config.fps)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: config.maxKeyIntervalFrames)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: Double(config.maxKeyIntervalFrames) / Double(config.fps))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: config.realTime ? kCFBooleanTrue : kCFBooleanFalse)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: config.bitrate))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: config.fps))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: config.maxKeyIntervalFrames))
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: NSNumber(value: Double(config.maxKeyIntervalFrames) / Double(config.fps)))
         // Снижаем задержку: без B-кадров, минимальный GOP для быстрого подхвата OBS
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: false)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PixelTransferProperties, value: [kVTCompressionPropertyKey_RealTime: true])
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PixelTransferProperties, value: [kVTCompressionPropertyKey_RealTime: kCFBooleanTrue] as CFDictionary)
         VTCompressionSessionPrepareToEncodeFrames(session)
         currentFPS = 0
         currentBitrateKbps = 0
@@ -109,15 +109,18 @@ final class VideoEncoder {
         AppLogger.info("Энкодер остановлен")
     }
 
+    private var forceNextKeyFrame = false
+
     func forceKeyFrame() {
-        guard let session = compressionSession else { return }
-        VTCompressionSessionEncodeFrame(session, imageBuffer: nil, presentationTimeStamp: CMTime.zero, duration: .zero, frameProperties: [kVTEncodeFrameOptionKey_ForceKeyFrame: true], infoFlagsOut: nil, outputHandler: nil)
+        forceNextKeyFrame = true
     }
 
     func encode(_ sampleBuffer: CMSampleBuffer) {
         guard let session = compressionSession, let px = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        VTCompressionSessionEncodeFrame(session, imageBuffer: px, presentationTimeStamp: pts, duration: .invalid, frameProperties: nil, infoFlagsOut: nil, outputHandler: nil)
+        let frameProps: CFDictionary? = forceNextKeyFrame ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
+        forceNextKeyFrame = false
+        VTCompressionSessionEncodeFrame(session, imageBuffer: px, presentationTimeStamp: pts, duration: .invalid, frameProperties: frameProps, infoFlagsOut: nil, outputHandler: { _, _, _ in })
         // статистика fps
         let now = CACurrentMediaTime()
         statLock.lock()
