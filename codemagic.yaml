@@ -5,7 +5,6 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
-      cocoapods: none
       vars:
         XCODE_PROJECT: NDICamera.xcodeproj
     scripts:
