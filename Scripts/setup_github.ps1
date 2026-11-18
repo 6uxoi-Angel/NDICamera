@@ -85,12 +85,16 @@ if ($needSigned -match '^[yYдД]') {
     Ok 'Подпись через AltStore — секреты не задаются'
 }
 
-# 6. Запуск сборки
+# 6. Сборка — через Codemagic (free macOS), т.к. на этом аккаунте GitHub
+#    отменяет macOS-раннеры (проверено).
 Say ''
-Say '[4/5] Запуск сборки (macOS runner, бесплатно)...'
-& $gh workflow run build.yml
-if ($LASTEXITCODE -ne 0) { Fail 'Не удалось запустить workflow' }
-Ok 'Workflow запущен'
+Say '[4/5] Сборка IPA — бесплатно через Codemagic (macOS-машины).'
+Say '  1) Зарегистрируйся: https://codemagic.io/start (бесплатно, можно через GitHub).'
+Say '  2) Добавь репозиторий 6uxoi-Angel/NDICamera.'
+Say '  3) Codemagic сам найдёт codemagic.yaml (уже создан в репозитории).'
+Say '  4) Нажми "Start new build" -> настройки по умолчанию -> Build.'
+Say '  5) Через ~10 минут скачай артефакт NDICamera-unsigned.ipa.'
+Ok 'Инструкция по Codemagic выведена'
 
 Say ''
 Say '[5/5] Статус:'

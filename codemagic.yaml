@@ -1,0 +1,41 @@
+workflows:
+  ios-build:
+    name: NDI Camera IPA (unsigned)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      cocoapods: none
+      vars:
+        XCODE_PROJECT: NDICamera.xcodeproj
+    scripts:
+      - name: Assemble NDI SDK from parts
+        script: python3 Scripts/split_join_sdk.py --join
+
+      - name: Generate Xcode project (XcodeGen)
+        script: |
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+          xcodegen generate
+
+      - name: Build archive (unsigned)
+        script: |
+          xcodebuild \
+            -project NDICamera.xcodeproj \
+            -scheme NDICamera \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/NDICamera.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package IPA
+        script: |
+          mkdir -p build/Payload
+          cp -R build/NDICamera.xcarchive/Products/Applications/NDICamera.app build/Payload/
+          cd build && zip -qr NDICamera-unsigned.ipa Payload
+    artifacts:
+      - build/NDICamera-unsigned.ipa
+    publishing:
+      email:
+        recipients:
+          - artemrasputin3@gmail.com
