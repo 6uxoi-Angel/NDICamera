@@ -48,42 +48,32 @@ jobs:
           path: build/NDICamera.ipa
           retention-days: 7
 
-  # Опционально: подписанная сборка под бесплатный Apple ID (Personal Team).
-  # Нужны секреты: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, TEAM_ID.
-  # Если секретов нет — джоба просто пропускает шаги (основной путь: AltStore).
+  # Опционально: подписанная сборка под Apple ID (Personal Team/paid).
+  # Включить: Settings -> Variables -> добавить переменную TRY_SIGNED = true.
+  # По умолчанию (переменной нет) джоба пропускается — основной путь AltStore.
   signed-build:
     runs-on: macos-14
     needs: build
+    if: ${{ vars.TRY_SIGNED == 'true' }}
     steps:
-      - name: Skip notice if no secrets
-        if: ${{ secrets.APPLE_ID == '' }}
-        run: echo "Секреты не заданы — подпись пропущена. Используй AltStore для установки IPA."
-
       - uses: actions/checkout@v4
-        if: ${{ secrets.APPLE_ID != '' }}
 
       - name: Assemble NDI SDK from parts
-        if: ${{ secrets.APPLE_ID != '' }}
         run: python3 Scripts/split_join_sdk.py --join
 
       - name: Verify NDI SDK presence
-        if: ${{ secrets.APPLE_ID != '' }}
         run: test -f NDISDK/iOS/libndi_ios.a || { echo "NDI SDK missing"; exit 1; }
 
       - name: Install XcodeGen
-        if: ${{ secrets.APPLE_ID != '' }}
         run: brew install xcodegen
 
       - name: Generate Xcode project
-        if: ${{ secrets.APPLE_ID != '' }}
         run: xcodegen generate
 
       - name: Install fastlane
-        if: ${{ secrets.APPLE_ID != '' }}
         run: brew install fastlane
 
       - name: Create free dev certificate + profile
-        if: ${{ secrets.APPLE_ID != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -94,7 +84,6 @@ jobs:
             --app_identifier dev.ndicamera.app --output_path ./profiles --force || true
 
       - name: Build signed IPA
-        if: ${{ secrets.APPLE_ID != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
@@ -110,7 +99,6 @@ jobs:
           cd build && zip -qr NDICamera-signed.ipa Payload
 
       - name: Upload signed artifact
-        if: ${{ secrets.APPLE_ID != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: NDICamera-signed
