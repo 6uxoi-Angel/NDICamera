@@ -95,7 +95,7 @@ final class AppLogger: ObservableObject {
         func install(_ sig: Int32, _ name: String) {
             signal(sig) { _ in
                 Self.writeRaw("[CRASH] \(name)\n")
-                _exit(128 + Int(sig))
+                _exit(128 + sig)
             }
         }
         install(SIGSEGV, "SIGSEGV")
