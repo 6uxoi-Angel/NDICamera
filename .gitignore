@@ -1,0 +1,6 @@
+build/
+certs/
+profiles/
+*.xcuserstate
+.DS_Store
+*.ipa

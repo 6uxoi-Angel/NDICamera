@@ -1,0 +1,105 @@
+name: Build NDI Camera (free macOS runner)
+
+on:
+  workflow_dispatch:      # запуск вручную
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble NDI SDK from parts
+        run: python3 Scripts/split_join_sdk.py --join
+
+      - name: Verify NDI SDK presence
+        run: |
+          test -f NDISDK/iOS/libndi_ios.a && echo "NDI SDK OK" || { echo "NDI SDK missing: put NDISDK/iOS/libndi_ios.a + NDISDK/include into repo"; exit 1; }
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned first pass)
+        run: |
+          xcodebuild \
+            -project NDICamera.xcodeproj \
+            -scheme NDICamera \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/NDICamera.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package IPA (unsigned)
+        run: |
+          mkdir -p build/Payload
+          cp -R build/NDICamera.xcarchive/Products/Applications/NDICamera.app build/Payload/
+          cd build && zip -qr NDICamera.ipa Payload
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NDICamera-unsigned
+          path: build/NDICamera.ipa
+          retention-days: 7
+
+  # Опционально: подписанная сборка под бесплатный Apple ID (Personal Team).
+  # Нужны секреты: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, TEAM_ID.
+  signed-build:
+    runs-on: macos-14
+    if: ${{ secrets.APPLE_ID != '' }}
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble NDI SDK from parts
+        run: python3 Scripts/split_join_sdk.py --join
+
+      - name: Verify NDI SDK presence
+        run: test -f NDISDK/iOS/libndi_ios.a || { echo "NDI SDK missing"; exit 1; }
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Install fastlane
+        run: brew install fastlane
+
+      - name: Create free dev certificate + profile
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          fastlane cert --team_id "$TEAM_ID" --username "$APPLE_ID" --output_path ./certs || true
+          fastlane sigh --team_id "$TEAM_ID" --username "$APPLE_ID" \
+            --app_identifier dev.ndicamera.app --output_path ./profiles --force || true
+
+      - name: Build signed IPA
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          xcodebuild -project NDICamera.xcodeproj -scheme NDICamera \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/NDICamera.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_IDENTITY="iPhone Developer" \
+            archive
+          mkdir -p build/Payload
+          cp -R build/NDICamera.xcarchive/Products/Applications/NDICamera.app build/Payload/
+          cd build && zip -qr NDICamera-signed.ipa Payload
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NDICamera-signed
+          path: build/NDICamera-signed.ipa
+          retention-days: 7
