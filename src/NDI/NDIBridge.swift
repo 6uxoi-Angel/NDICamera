@@ -95,17 +95,10 @@ final class NDIBridge: ObservableObject {
 
     func sendEncodedVideo(_ frame: EncodedFrame) {
         guard isRunning else { return }
-        // формат при необходимости
-        var payload = frame.payload
-        if frame.avcc != (config?.h264Format == .avcc) {
-            payload = frame.avcc ? toAnnexB(payload) : toAVCC(payload)
-        }
-        self.native.sendVideoH264(payload,
-                                  width: Int32(frame.width),
-                                  height: Int32(frame.height),
-                                  timestampUs: Int64(frame.timestampUs),
-                                  keyFrame: frame.isKeyFrame,
-                                  formatIsAvcc: (config?.h264Format == .avcc))
+        native.sendVideoNV12(frame.payload,
+                             width: Int32(frame.width),
+                             height: Int32(frame.height),
+                             timestampUs: Int64(frame.timestampUs))
     }
 
     func sendAudioPCM(data: Data, samples: Int, channels: Int, sampleRate: Int, timestampUs: UInt64) {

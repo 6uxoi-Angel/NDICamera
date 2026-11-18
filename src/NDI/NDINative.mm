@@ -48,33 +48,20 @@
     create.p_ndi_name = (const char*)[name UTF8String];
     create.clock_video = true;
     create.clock_audio = true;
-    // Выбор локального интерфейса (USB Remote NDIS / Wi-Fi)
-    if (localIP.length > 0) {
-        create.p_ip_address = (const char*)[localIP UTF8String];
-    }
-
     _sender = NDIlib_send_create(&create);
     if (!_sender) {
         _lastErrorMessage = @"NDIlib_send_create() не удался";
         return NO;
     }
 
-    // Discovery Server (fallback для mDNS)
-    if (discoveryServer.length > 0) {
-        NDIlib_discovery_create_t dc;
-        memset(&dc, 0, sizeof(dc));
-        dc.p_ndi_name = (const char*)[discoveryServer UTF8String];
-        NDIlib_discovery_instance_t disc = NDIlib_discovery_create(&dc);
-        if (disc) NDIlib_discovery_destroy(disc);
-    }
-
     // Обратный канал для tally (метаданные из DistroAV/OBS)
     NDIlib_recv_create_v3_t rc;
     memset(&rc, 0, sizeof(rc));
-    rc.source_name = (const char*)[name UTF8String];
-    rc.color_format = NDIlib_recv_color_format_bgrx_bgra;
-    rc.bandwidth = NDIlib_recv_bandwidth_lowest; // метаданные — максимум
+    rc.source_to_connect_to = NDIlib_source_t();
+    rc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
+    rc.bandwidth = NDIlib_recv_bandwidth_lowest;
     rc.allow_video_fields = true;
+    rc.p_ndi_recv_name = [name UTF8String];
     _tallyRecv = NDIlib_recv_create_v3(&rc);
 
     _lastErrorMessage = @"";
@@ -91,12 +78,10 @@
 
 - (BOOL)isOpen { return _open; }
 
-- (void)sendVideoH264:(NSData*)payload
+- (void)sendVideoNV12:(NSData*)payload
                  width:(int)width
                 height:(int)height
-             timestampUs:(int64_t)timestampUs
-              keyFrame:(BOOL)keyFrame
-         formatIsAvcc:(BOOL)avcc {
+             timestampUs:(int64_t)timestampUs {
     if (!_open || !_sender || payload.length == 0) return;
 
     dispatch_async(_sendQueue, ^{
@@ -105,11 +90,11 @@
         v.xres = width;
         v.yres = height;
         v.frame_rate_N = 60000;
-        v.frame_rate_D = 1001; // перезапишется из настроек (значение по умолчанию)
+        v.frame_rate_D = 1001;
+        v.FourCC = NDIlib_FourCC_video_type_NV12;
         v.frame_format_type = NDIlib_frame_format_type_progressive;
         v.p_data = (uint8_t*)payload.bytes;
-        v.line_stride_in_bytes = 0; // для H.264 (HX) не используется
-        v.fourcc_type = NDIlib_FOURCC_TYPE_H264;
+        v.line_stride_in_bytes = width; // Y-строка; CbCr идёт сразу за Y
         v.timestamp = timestampUs;
         v.p_metadata = NULL;
         NDIlib_send_send_video_async_v2(_sender, &v);

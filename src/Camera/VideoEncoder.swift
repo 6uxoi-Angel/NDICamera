@@ -34,206 +34,80 @@ struct EncodedFrame {
     var avcc: Bool               // true = AVCC (длина-префикс), false = Annex-B
 }
 
-/// Аппаратный H.264 энкодер на VideoToolbox.
+/// Отдаёт кадры в формате NV12 (420f) — Full NDI, без H.264.
+/// SDK 6.3.2 для iOS не умеет отправку HX (H.264): только несжатые форматы.
 final class VideoEncoder {
     var onEncodedFrame: ((EncodedFrame) -> Void)?
     private(set) var isRunning = false
 
-    private var compressionSession: VTCompressionSession?
     private var config: EncoderConfig?
-    private var cachedSPS: Data?
-    private var cachedPPS: Data?
 
-    // Статистика
     private var statLock = NSLock()
     private var frameCount = 0
-    private var lastFrameTime: CFTimeInterval = 0
     private var lastIntervalStart: CFTimeInterval = 0
-    private var encodedBytes = 0
     private(set) var currentFPS: Double = 0
     private(set) var currentBitrateKbps: Double = 0
 
     func start(config: EncoderConfig) {
         stop()
         self.config = config
-        cachedSPS = nil
-        cachedPPS = nil
         frameCount = 0
         lastIntervalStart = CACurrentMediaTime()
-
-        var status: OSStatus = noErr
-        let attrs: [NSString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        ]
-        var sessionOut: VTCompressionSession?
-        status = VTCompressionSessionCreate(
-            allocator: nil,
-            width: Int32(config.width),
-            height: Int32(config.height),
-            codecType: kCMVideoCodecType_H264,
-            encoderSpecification: nil,
-            imageBufferAttributes: attrs as CFDictionary,
-            compressedDataAllocator: nil,
-            outputCallback: { (refcon, _, status, flags, sampleBuffer) in
-                guard let refcon else { return }
-                let encoder = Unmanaged<VideoEncoder>.fromOpaque(refcon).takeUnretainedValue()
-                encoder.handleOutput(status: status, flags: flags, sampleBuffer: sampleBuffer)
-            },
-            refcon: Unmanaged.passUnretained(self).toOpaque(),
-            compressionSessionOut: &sessionOut
-        )
-        guard status == noErr, let session = sessionOut else {
-            AppLogger.error("VTCompressionSessionCreate: \(status)")
-            return
-        }
-        // Параметры кодирования (значения — CFTypeRef: CFNumber/CFBoolean)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: config.realTime ? kCFBooleanTrue : kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: config.bitrate))
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: NSNumber(value: config.fps))
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: NSNumber(value: config.maxKeyIntervalFrames))
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: NSNumber(value: Double(config.maxKeyIntervalFrames) / Double(config.fps)))
-        // Снижаем задержку: без B-кадров, минимальный GOP для быстрого подхвата OBS
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PixelTransferProperties, value: [kVTCompressionPropertyKey_RealTime: kCFBooleanTrue] as CFDictionary)
-        VTCompressionSessionPrepareToEncodeFrames(session)
         currentFPS = 0
         currentBitrateKbps = 0
         isRunning = true
+        AppLogger.info("Видео: подготовка к Full NDI (NV12) \(config.width)x\(config.height)@\(config.fps)")
     }
 
     func stop() {
-        guard let session = compressionSession else { return }
-        VTCompressionSessionInvalidate(session)
-        compressionSession = nil
         isRunning = false
-        AppLogger.info("Энкодер остановлен")
+        AppLogger.info("Видео остановлено")
     }
 
-    private var forceNextKeyFrame = false
-
     func forceKeyFrame() {
-        forceNextKeyFrame = true
+        // Full NDI не требует ключевых кадров
     }
 
     func encode(_ sampleBuffer: CMSampleBuffer) {
-        guard let session = compressionSession, let px = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        let frameProps: CFDictionary? = forceNextKeyFrame ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
-        forceNextKeyFrame = false
-        VTCompressionSessionEncodeFrame(session, imageBuffer: px, presentationTimeStamp: pts, duration: .invalid, frameProperties: frameProps, infoFlagsOut: nil, outputHandler: { _, _, _ in })
-        // статистика fps
+        guard isRunning, let config else { return }
+        guard let px = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let w = CVPixelBufferGetWidth(px)
+        let h = CVPixelBufferGetHeight(px)
+        guard w > 0, h > 0 else { return }
+
+        CVPixelBufferLockBaseAddress(px, [])
+        defer { CVPixelBufferUnlockBaseAddress(px, []) }
+
+        guard let yBase = CVPixelBufferGetBaseAddressOfPlane(px, 0),
+              let uvBase = CVPixelBufferGetBaseAddressOfPlane(px, 1) else {
+            return
+        }
+        let yBytes = w * h
+        let uvBytes = (w / 2) * (h / 2) * 2
+        var payload = Data(capacity: yBytes + uvBytes)
+        payload.append(Data(bytes: yBase, count: yBytes))
+        payload.append(Data(bytes: uvBase, count: uvBytes))
+
+        let timestampUs = UInt64((CFAbsoluteTimeGetCurrent() + 978307200) * 1e7)
+
         let now = CACurrentMediaTime()
         statLock.lock()
         frameCount += 1
         if now - lastIntervalStart >= 2.0 {
             currentFPS = Double(frameCount) / (now - lastIntervalStart)
-            currentBitrateKbps = (Double(encodedBytes) * 8.0 / 1000.0) / (now - lastIntervalStart)
+            currentBitrateKbps = (Double(payload.count) * 8.0 / 1000.0) * currentFPS / 1000.0
             frameCount = 0
-            encodedBytes = 0
             lastIntervalStart = now
         }
         statLock.unlock()
-    }
 
-    private func handleOutput(status: OSStatus, flags: VTEncodeInfoFlags, sampleBuffer: CMSampleBuffer?) {
-        guard status == noErr, let sb = sampleBuffer else {
-            if status != noErr { AppLogger.error("Энкодер status \(status)") }
-            return
-        }
-        let isKeyframe: Bool
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[CFString: Any]],
-           let notSync = attachments.first?[kCMSampleAttachmentKey_NotSync as CFString] as? Bool {
-            isKeyframe = !notSync
-        } else {
-            isKeyframe = true
-        }
-
-        // Извлекаем SPS/PPS один раз из description
-        if cachedSPS == nil {
-            extractParameterSets(from: sb)
-        }
-
-        guard let config else { return }
-        let start = CFTimeInterval(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sb)))
-        _ = start
-
-        // Данные: CMBlockBuffer — это AVCC (длина-префикс). Преобразуем при необходимости.
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sb) else { return }
-        let totalLength = CMBlockBufferGetDataLength(blockBuffer)
-        guard totalLength > 0 else { return }
-        var dataPtr: UnsafeMutablePointer<Int8>?
-        var lengthAtOffset: Int = 0
-        var total: Int = 0
-        let err = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset, totalLengthOut: &total, dataPointerOut: &dataPtr)
-        guard err == kCMBlockBufferNoErr, let p = dataPtr else { return }
-        let rawData = Data(bytes: p, count: totalLength)
-
-        // Единая временная база для видео и аудио: 100нс от эпохи 2001 (как в AudioCapturer)
-        let timestampUs = UInt64((CFAbsoluteTimeGetCurrent() + 978307200) * 1e7)
-        let avcc = true
-        var payload = rawData
-
-        if !avcc {
-            payload = toAnnexB(rawData)
-        }
-
-        var spspps: Data?
-        if let s = cachedSPS, let p = cachedPPS {
-            if avcc {
-                var combined = Data()
-                combined.append(s)
-                combined.append(p)
-                spspps = combined
-            } else {
-                var combined = Data()
-                combined.append(Data([0,0,0,1]))
-                combined.append(s)
-                combined.append(Data([0,0,0,1]))
-                combined.append(p)
-                spspps = combined
-            }
-        }
-
-        statLock.lock()
-        encodedBytes += payload.count
-        statLock.unlock()
-
-        let frame = EncodedFrame(payload: payload, width: config.width, height: config.height, spsPps: spspps, timestampUs: timestampUs, isKeyFrame: isKeyframe, avcc: avcc)
+        let frame = EncodedFrame(payload: payload,
+                                 width: w,
+                                 height: h,
+                                 spsPps: nil,
+                                 timestampUs: timestampUs,
+                                 isKeyFrame: true,
+                                 avcc: false)
         onEncodedFrame?(frame)
-    }
-
-    private func extractParameterSets(from sb: CMSampleBuffer) {
-        guard let fmt = CMSampleBufferGetFormatDescription(sb) else { return }
-        var spsData: Data?
-        var ppsData: Data?
-        var count = 0
-        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
-        var size = 0
-        var ptr: UnsafePointer<UInt8>?
-        if count > 0, CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, parameterSetIndex: 0, parameterSetPointerOut: &ptr, parameterSetSizeOut: &size, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil) == noErr, let p = ptr {
-            spsData = Data(bytes: p, count: size)
-        }
-        if count > 1, CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, parameterSetIndex: 1, parameterSetPointerOut: &ptr, parameterSetSizeOut: &size, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil) == noErr, let p = ptr {
-            ppsData = Data(bytes: p, count: size)
-        }
-        cachedSPS = spsData
-        cachedPPS = ppsData
-    }
-
-    /// AVCC → Annex-B (старт-коды)
-    private func toAnnexB(_ avcc: Data) -> Data {
-        var out = Data()
-        var idx = 0
-        let bytes = [UInt8](avcc)
-        while idx + 4 <= bytes.count {
-            let len = Int(bytes[idx]) << 24 | Int(bytes[idx+1]) << 16 | Int(bytes[idx+2]) << 8 | Int(bytes[idx+3])
-            idx += 4
-            if len <= 0 || idx + len > bytes.count { break }
-            out.append(contentsOf: [0,0,0,1])
-            out.append(contentsOf: bytes[idx..<idx+len])
-            idx += len
-        }
-        return out
     }
 }

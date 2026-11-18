@@ -23,14 +23,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)close;
 - (BOOL)isOpen;
 
-/// Отправить закодированный кадр H.264 (payload = SPS/PPS + данные кадра в формате avcc/annexB).
+/// Отправить кадр NV12 (Y-плоскость + CbCr-плоскость непрерывно).
 /// timestampUs — в 100 нс единицах (как требует NDI).
-- (void)sendVideoH264:(NSData*)payload
+- (void)sendVideoNV12:(NSData*)payload
                  width:(int)width
                 height:(int)height
-         timestampUs:(int64_t)timestampUs
-              keyFrame:(BOOL)keyFrame
-         formatIsAvcc:(BOOL)avcc;
+             timestampUs:(int64_t)timestampUs;
 
 /// Отправить PCM Int16 (interleaved). Массив — 1 кадр аудио.
 - (void)sendAudioPCM:(NSData*)pcm
