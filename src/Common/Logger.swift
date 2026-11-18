@@ -88,13 +88,13 @@ final class AppLogger: ObservableObject {
         // ObjC/NSException
         NSSetUncaughtExceptionHandler { exception in
             let msg = "EXCEPTION: \(exception.name.rawValue): \(exception.reason ?? "?")\n\(exception.callStackSymbols.joined(separator: "\n"))\n"
-            Self.writeRaw(msg)
+            AppLogger.writeRaw(msg)
         }
 
         // Сигналы
         func install(_ sig: Int32, _ name: String) {
             signal(sig) { _ in
-                Self.writeRaw("[CRASH] \(name)\n")
+                AppLogger.writeRaw("[CRASH] \(name)\n")
                 _exit(128 + sig)
             }
         }
