@@ -4,6 +4,8 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
+    @State private var interfaces: [LocalInterface] = NetworkInterfaces.all()
+
     var body: some View {
         NavigationStack {
             Form {
@@ -46,10 +48,37 @@ struct SettingsView: View {
                 TextField("Адрес Discovery Server", text: $model.settings.discoveryServerIP)
                     .keyboardType(.numbersAndPunctuation)
             }
-            TextField("Локальный IP (пусто = авто, для выбора Wi-Fi/USB)", text: $model.settings.localInterfaceIP)
-                .keyboardType(.numbersAndPunctuation)
+
+            // Выбор интерфейса: Wi-Fi / USB / авто
+            Picker("Интерфейс", selection: $model.settings.localInterfaceIP) {
+                Text("Авто").tag("")
+                ForEach(interfaces + missingCurrent) { i in
+                    Text(i.label).tag(i.ip)
+                }
+            }
+            .onAppear { interfaces = NetworkInterfaces.all() }
+
+            Text(interfaceHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
+
+    /// Если сохранённый IP уже не виден в списке (напр. отключили USB) —
+    /// держим его в Picker'е, чтобы выбор не «слетал» молча.
+    private var missingCurrent: [LocalInterface] {
+        let sel = model.settings.localInterfaceIP
+        guard !sel.isEmpty, !interfaces.contains(where: { $0.ip == sel }) else { return [] }
+        return [LocalInterface(name: "?", ip: sel)]
+    }
+
+    private var interfaceHint: String {
+        if let usb = interfaces.first(where: { $0.isUSB }) {
+            return "Найден USB-интерфейс: \(usb.ip). Чтобы трафик шёл по кабелю, выключи Wi-Fi на iPhone (иначе NDI выберет Wi-Fi). На ПК: ipconfig /all — диапазон сети должен совпасть."
+        }
+        return "Для работы по USB: подключи iPhone кабелем, на iPhone включи Настройки → Personal Hotspot (режим USB), затем выбери USB-интерфейс здесь."
+    }
+
 
     private var videoSection: some View {
         Section("Видео") {

@@ -171,6 +171,22 @@ final class AppModel: ObservableObject {
         isStreaming ? stopStreaming(reason: "Остановлено пользователем") : startStreaming()
     }
 
+    /// Краткое описание текущего сетевого пути (для экрана).
+    var linkDescription: String {
+        let interfaces = NetworkInterfaces.all()
+        let sel = settings.localInterfaceIP
+        if !sel.isEmpty, let found = interfaces.first(where: { $0.ip == sel }) {
+            return found.isUSB ? "USB · \(found.ip)" : found.label
+        }
+        if let wifi = interfaces.first(where: { $0.name == "en0" }) {
+            return "Wi-Fi · \(wifi.ip)"
+        }
+        if let usb = interfaces.first(where: { $0.isUSB }) {
+            return "USB · \(usb.ip)"
+        }
+        return "Нет сети"
+    }
+
     func startStreaming() {
         guard !isStreaming else { return }
         guard permissionGranted else {
@@ -179,6 +195,18 @@ final class AppModel: ObservableObject {
             return
         }
         AppLogger.info("Запуск трансляции: \(settings.ndiName), \(settings.resolution.rawValue)@\(settings.fps), транспорт \(settings.transportMode.rawValue), ~\(Int(settings.resolution.approxMbps(fps: settings.fps))) Мбит/с")
+        // Интерфейс: подсветить выбор и предупредить о Wi-Fi при USB
+        let selectedIP = settings.localInterfaceIP
+        if selectedIP.isEmpty {
+            AppLogger.info("NDI: интерфейс — Авто (NDI сам выберет маршрут)")
+        } else if let iface = NetworkInterfaces.all().first(where: { $0.ip == selectedIP }) {
+            AppLogger.info("NDI: выбран интерфейс \(iface.label)")
+            if iface.isUSB {
+                AppLogger.warn("USB-режим: чтобы трафик шёл по кабелю, выключи Wi-Fi на iPhone")
+            }
+        } else {
+            AppLogger.warn("NDI: выбранный интерфейс \(selectedIP) не найден — NDI сам выберет маршрут")
+        }
         if settings.transportMode == .manual, settings.manualIP.isEmpty {
             AppLogger.error("Ручной режим: не указан IP компьютера")
             return

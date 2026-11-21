@@ -88,6 +88,16 @@ struct ContentView: View {
 
     private var bottomControls: some View {
         VStack(spacing: 12) {
+            // Текущий сетевой путь (Wi-Fi / USB)
+            if model.isStreaming {
+                Text(model.linkDescription)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.45), in: Capsule())
+            }
+
             // Экспозиция / фонарик / камера
             HStack(spacing: 20) {
                 ControlButton(icon: "sun.max", label: "Эксп.") {
