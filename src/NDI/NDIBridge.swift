@@ -6,7 +6,7 @@ struct BridgeConfig {
     var targetIP: String?          // ручной IP приёмника
     var discoveryServer: String?   // Discovery Server (fallback)
     var localIP: String?           // выбор интерфейса
-    var h264Format: AppSettings.H264Format
+    var fps: Int
 }
 
 extension BridgeConfig {
@@ -15,11 +15,20 @@ extension BridgeConfig {
         targetIP = settings.transportMode == .manual && !settings.manualIP.isEmpty ? settings.manualIP : nil
         discoveryServer = settings.transportMode == .discoveryServer && !settings.discoveryServerIP.isEmpty ? settings.discoveryServerIP : nil
         localIP = settings.localInterfaceIP.isEmpty ? nil : settings.localInterfaceIP
-        h264Format = settings.h264Format
+        fps = settings.fps
     }
+    /// NTSC-подобные отношения для NDI (30 → 30000/1000)
+    var fpsN: Int32 { Int32(fps * 1000) }
+    var fpsD: Int32 { 1000 }
 }
 
-/// Фасад NDI: singleton, потокобезопасный. Отправляет видео/аудио, принимает tally.
+/// Фасад NDI: singleton. Отправляет видео/аудио, принимает tally.
+///
+/// Потокобезопасность:
+/// - конфигурация и жизненный цикл — на сериальной `queue`;
+/// - `isRunning` под лёгким замком (читается из потока камеры/аудио);
+/// - Timer опроса tally создаётся/уничтожается ТОЛЬКО в main-потоке
+///   (invalidate() из чужого потока — ещё один источник редких крэшей).
 final class NDIBridge: ObservableObject {
     static let shared = NDIBridge()
 
@@ -29,12 +38,27 @@ final class NDIBridge: ObservableObject {
 
     private let native = NDINative()
     private let queue = DispatchQueue(label: "ndi.bridge.queue")
-    private var tallyTimer: Timer?
-    private var config: BridgeConfig?
-    private(set) var isRunning = false
-    private var lastKeyFrameSent = false
+    private let stateLock = NSLock()
+    private var tallyTimer: Timer?          // только main-поток
+    private var _config: BridgeConfig?
+    private var _isRunning = false
+    private var isPollScheduled = false
 
     private init() {}
+
+    var isRunning: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _isRunning
+    }
+
+    private func setRunning(_ v: Bool) {
+        stateLock.lock(); _isRunning = v; stateLock.unlock()
+    }
+
+    private var config: BridgeConfig? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _config
+    }
 
     // MARK: - Жизненный цикл
 
@@ -45,15 +69,20 @@ final class NDIBridge: ObservableObject {
             let ok = self.native.open(withName: config.name,
                                       targetIP: config.targetIP,
                                       discoveryServer: config.discoveryServer,
-                                      localIP: config.localIP)
+                                      localIP: config.localIP,
+                                      fpsN: config.fpsN,
+                                      fpsD: config.fpsD)
             if !ok {
                 AppLogger.error("NDI не запустился: \(self.native.lastErrorMessage)")
+                self.setRunning(false)
                 return
             }
-            self.config = config
-            self.isRunning = true
+            self.stateLock.lock()
+            self._config = config
+            self._isRunning = true
+            self.stateLock.unlock()
             self.startTallyPolling()
-            AppLogger.info("NDI запущен: \(config.name)")
+            AppLogger.info("NDI запущен: \(config.name) @\(config.fps)fps")
         }
     }
 
@@ -63,26 +92,38 @@ final class NDIBridge: ObservableObject {
         }
     }
 
+    /// Вызывается только с `queue`.
     private func stopInternal() {
         guard isRunning else { return }
+        // Сначала гасим polling (safe invalidate в main), потом закрываем SDK.
+        DispatchQueue.main.async {
+            self.tallyTimer?.invalidate()
+            self.tallyTimer = nil
+        }
         native.close()
-        isRunning = false
-        stopTallyPolling()
+        setRunning(false)
         DispatchQueue.main.async {
             self.tally = .none
+            self.onTally?(.none)
         }
         AppLogger.info("NDI остановлен")
     }
 
-    func reconnect() {
+    func reconnect(reason: String) {
         queue.async { [weak self] in
-            guard let self, let cfg = self.config else { return }
+            guard let self else { return }
+            // Переподключение нужно только когда трансляция реально шла.
+            guard let cfg = self.config, self.isRunning else { return }
+            AppLogger.info("NDI: переподключение (\(reason))")
             self.stopInternal()
-            if self.native.open(withName: cfg.name,
-                                targetIP: cfg.targetIP,
-                                discoveryServer: cfg.discoveryServer,
-                                localIP: cfg.localIP) {
-                self.isRunning = true
+            let ok = self.native.open(withName: cfg.name,
+                                      targetIP: cfg.targetIP,
+                                      discoveryServer: cfg.discoveryServer,
+                                      localIP: cfg.localIP,
+                                      fpsN: cfg.fpsN,
+                                      fpsD: cfg.fpsD)
+            if ok {
+                self.setRunning(true)
                 self.startTallyPolling()
                 AppLogger.info("NDI: переподключение выполнено")
             } else {
@@ -91,88 +132,51 @@ final class NDIBridge: ObservableObject {
         }
     }
 
-    // MARK: - Отправка
+    // MARK: - Отправка (вызывается из потоков камеры/аудио; безопасность — в NDINative)
 
-    func sendEncodedVideo(_ frame: EncodedFrame) {
+    func sendVideoNV12(_ payload: Data, width: Int, height: Int, timecodeUs: UInt64) {
         guard isRunning else { return }
-        native.sendVideoNV12(frame.payload,
-                             width: Int32(frame.width),
-                             height: Int32(frame.height),
-                             timestampUs: Int64(frame.timestampUs))
+        native.sendVideoNV12(payload,
+                             width: Int32(width),
+                             height: Int32(height),
+                             timecodeUs: Int64(timecodeUs))
     }
 
-    func sendAudioPCM(data: Data, samples: Int, channels: Int, sampleRate: Int, timestampUs: UInt64) {
-        guard isRunning else { return }
-        native.sendAudioPCM(data, channels: Int32(channels), sampleRate: Int32(sampleRate), timestampUs: Int64(timestampUs))
+    func sendAudioFLTP(data: Data, samples: Int, channels: Int, sampleRate: Int, timecodeUs: UInt64) {
+        guard isRunning, samples > 0 else { return }
+        native.sendAudioFLTP(data,
+                             channels: Int32(channels),
+                             sampleRate: Int32(sampleRate),
+                             timecodeUs: Int64(timecodeUs))
     }
 
     // MARK: - Tally
 
     private func startTallyPolling() {
-        stopTallyPolling()
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        DispatchQueue.main.async {
+            self.tallyTimer?.invalidate()
+            let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+                self?.pollOnce()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.tallyTimer = timer
+        }
+    }
+
+    private func pollOnce() {
+        // Не наслаиваем опросы, если очередь SDK занята отправкой
+        stateLock.lock()
+        if isPollScheduled { stateLock.unlock(); return }
+        isPollScheduled = true
+        stateLock.unlock()
+        native.pollTally { [weak self] result in
             guard let self else { return }
-            let result = self.native.pollTally()
+            self.stateLock.lock(); self.isPollScheduled = false; self.stateLock.unlock()
             let state: TallyState = result == "program" ? .program : (result == "preview" ? .preview : .none)
-            DispatchQueue.main.async {
-                if self.tally != state {
-                    self.tally = state
-                    self.onTally?(state)
-                }
+            if self.tally != state {
+                self.tally = state
+                self.onTally?(state)
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        tallyTimer = timer
-    }
-
-    private func stopTallyPolling() {
-        tallyTimer?.invalidate()
-        tallyTimer = nil
-    }
-
-    // MARK: - Форматы H.264
-
-    /// AVCC → Annex-B
-    private func toAnnexB(_ data: Data) -> Data {
-        var out = Data()
-        let bytes = [UInt8](data)
-        var idx = 0
-        while idx + 4 <= bytes.count {
-            let len = Int(bytes[idx]) << 24 | Int(bytes[idx+1]) << 16 | Int(bytes[idx+2]) << 8 | Int(bytes[idx+3])
-            idx += 4
-            guard len > 0, idx + len <= bytes.count else { break }
-            out.append(contentsOf: [0, 0, 0, 1])
-            out.append(contentsOf: bytes[idx..<(idx+len)])
-            idx += len
-        }
-        return out
-    }
-
-    /// Annex-B → AVCC
-    private func toAVCC(_ data: Data) -> Data {
-        var out = Data()
-        let bytes = [UInt8](data)
-        var idx = 0
-        while idx < bytes.count {
-            // ищем старт-код
-            guard bytes[idx] == 0, idx + 3 < bytes.count, bytes[idx+1] == 0, bytes[idx+2] == 0 else {
-                // просто копируем остаток
-                out.append(contentsOf: bytes[idx...])
-                break
-            }
-            var naluStart = idx + 3
-            if bytes[naluStart] == 1 { naluStart += 1 }
-            else if bytes[naluStart] == 0 { naluStart += 1 } // 4-байтовый код
-            // конец NAL
-            var end = naluStart
-            while end + 3 < bytes.count, !(bytes[end] == 0 && bytes[end+1] == 0 && (bytes[end+2] == 1 || (bytes[end+3] == 1 && bytes[end+2] == 0))) {
-                end += 1
-            }
-            let len = end - naluStart
-            out.append(contentsOf: withUnsafeBytes(of: UInt32(len).bigEndian) { Data($0) })
-            out.append(contentsOf: bytes[naluStart..<end])
-            idx = end
-        }
-        return out
     }
 }

@@ -62,29 +62,15 @@ struct SettingsView: View {
                 Text("30").tag(30)
                 Text("60").tag(60)
             }
-            VStack {
-                HStack {
-                    Text("Битрейт")
-                    Spacer()
-                    Text(String(format: "%.0f Мбит/с", model.settings.bitrateMbps))
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $model.settings.bitrateMbps, in: 4...25, step: 1)
-            }
+            Text("Полный NDI (NV12, без сжатия): ~\(Int(model.settings.resolution.approxMbps(fps: model.settings.fps))) Мбит/с. Для Wi-Fi достаточно 720p30.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Picker("Камера", selection: $model.settings.camera) {
                 ForEach(AppSettings.CameraSelection.allCases) { c in
                     Text(c.rawValue).tag(c)
                 }
             }
             Toggle("Зеркалировать фронтальную", isOn: $model.settings.mirrorFront)
-            Picker("Формат H.264", selection: $model.settings.h264Format) {
-                ForEach(AppSettings.H264Format.allCases) { f in
-                    Text(f.rawValue).tag(f)
-                }
-            }
-            Text("Если в OBS чёрный экран — переключи формат (AVCC ↔ Annex-B)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -97,7 +83,7 @@ struct SettingsView: View {
     private var behaviorSection: some View {
         Section("Поведение") {
             Toggle("Не гасить экран при трансляции", isOn: $model.settings.keepAwake)
-            Text("Изменения разрешения/битрейта применяются при следующем запуске")
+            Text("Изменения разрешения/fps применяются при следующем запуске")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -1,52 +1,59 @@
 import Foundation
 import Network
-import Combine
 
 /// Мониторинг сети + авто-reconnect.
-/// При смене интерфейса/обрыве — пересоздаёт NDI-отправителя.
+///
+/// Было: reconnect() дёргался на КАЖДОМ обновлении NWPathMonitor (первое —
+/// мгновенно при attach, дальше — на любые флуктуации роутинга) и убивал/
+/// пересоздавал NDI-отправителя посреди трансляции, усиливая гонки в SDK.
+/// Стало: переподключение только при реальной смене статуса/набора интерфейсов.
 final class TransportManager {
     private let settings: AppSettings
     private let bridge: NDIBridge
-    private let onStats: (StreamStats) -> Void
-    private var monitor: NWPathMonitor?
-    private var lastPathStatus: NWPath.Status?
-    private var healthTimer: Timer?
+    private let monitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "transport.monitor")
+    private var lastSignature: String?
+    private var started = false
 
-    init(settings: AppSettings, bridge: NDIBridge, stats: @escaping (StreamStats) -> Void) {
+    init(settings: AppSettings, bridge: NDIBridge) {
         self.settings = settings
         self.bridge = bridge
-        self.onStats = stats
     }
 
     func attach() {
-        let m = NWPathMonitor()
-        m.pathUpdateHandler = { [weak self] path in
+        guard !started else { return }
+        started = true
+        monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
-            let status = path.status
-            self.lastPathStatus = status
-            if status == .satisfied {
-                AppLogger.info("Сеть: доступна (\(path.availableInterfaces.map { $0.name }))")
-                // Если стрим должен идти, а NDI не активен — перезапускаем
-                if self.settings.transportMode != .manual {
-                    self.bridge.reconnect()
+            let interfaces = path.availableInterfaces.map(\.name).sorted()
+            let signature = "\(path.status.rawValue):\(interfaces.joined(separator: ","))"
+            // Первый вызов — просто запоминаем состояние, reconnect не нужен
+            guard let previous = self.lastSignature else {
+                self.lastSignature = signature
+                AppLogger.info("Сеть: \(path.status == .satisfied ? "доступна" : "недоступна") [\(interfaces.joined(separator: ", "))]")
+                return
+            }
+            guard signature != previous else { return }
+            self.lastSignature = signature
+            if path.status == .satisfied {
+                AppLogger.info("Сеть: изменилась → [\(interfaces.joined(separator: ", "))]")
+                if self.bridge.isRunning {
+                    self.bridge.reconnect(reason: "смена сети")
                 }
             } else {
-                AppLogger.warn("Сеть: потеряна связи (\(status))")
+                AppLogger.warn("Сеть: потеря связи (\(path.status))")
             }
         }
-        m.start(queue: DispatchQueue(label: "transport.monitor"))
-        monitor = m
+        monitor.start(queue: monitorQueue)
+    }
 
-        healthTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            if self.bridge.isRunning {
-                self.onStats(StreamStats(fps: self.bridge.isRunning ? 1 : 0, bitrateKbps: 0, status: "NDI активен"))
-            }
-        }
+    func detach() {
+        guard started else { return }
+        started = false
+        monitor.cancel()
     }
 
     deinit {
-        monitor?.cancel()
-        healthTimer?.invalidate()
+        monitor.cancel()
     }
 }

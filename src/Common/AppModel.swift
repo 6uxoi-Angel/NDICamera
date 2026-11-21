@@ -25,6 +25,11 @@ final class AppSettings: ObservableObject {
             case .r4K: return (3840, 2160)
             }
         }
+        /// Приблизительный поток Full NDI (несжатый NV12), Мбит/с
+        func approxMbps(fps: Int) -> Double {
+            let (w, h) = size
+            return Double(w * h * 3 / 2 * 8 * fps) / 1_000_000.0
+        }
     }
     enum CameraSelection: String, CaseIterable, Identifiable {
         case front = "Фронтальная"
@@ -45,7 +50,7 @@ final class AppSettings: ObservableObject {
     @Published var localInterfaceIP: String { didSet { save() } }   // пусто = авто
     @Published var resolution: VideoResolution { didSet { save() } }
     @Published var fps: Int { didSet { save() } }
-    @Published var bitrateMbps: Double { didSet { save() } }
+    @Published var bitrateMbps: Double { didSet { save() } }        // наследие HX, не используется
     @Published var camera: CameraSelection { didSet { save() } }
     @Published var mirrorFront: Bool { didSet { save() } }
     @Published var audioEnabled: Bool { didSet { save() } }
@@ -59,7 +64,8 @@ final class AppSettings: ObservableObject {
         manualIP = d.string(forKey: "manualIP") ?? ""
         discoveryServerIP = d.string(forKey: "discoveryServerIP") ?? ""
         localInterfaceIP = d.string(forKey: "localInterfaceIP") ?? ""
-        resolution = VideoResolution(rawValue: d.string(forKey: "resolution") ?? "") ?? .r1080p
+        // По умолчанию 720p30: Full NDI по Wi-Fi тянет только такой поток
+        resolution = VideoResolution(rawValue: d.string(forKey: "resolution") ?? "") ?? .r720p
         fps = d.object(forKey: "fps") as? Int ?? 30
         bitrateMbps = d.object(forKey: "bitrateMbps") as? Double ?? 8.0
         camera = CameraSelection(rawValue: d.string(forKey: "camera") ?? "") ?? .back
@@ -110,30 +116,54 @@ final class AppModel: ObservableObject {
     let encoder = VideoEncoder()
     let audio = AudioCapturer()
     let bridge = NDIBridge.shared
+    private var transport: TransportManager?          // должен ЖИТЬ — иначе монитор сети не работает
+    private var statsTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
     func setup() {
         camera.onFrame = { [weak self] sb in self?.encoder.encode(sb) }
-        encoder.onEncodedFrame = { [weak self] frame in self?.bridge.sendEncodedVideo(frame) }
+        encoder.onEncodedFrame = { [weak self] frame in
+            self?.bridge.sendVideoNV12(frame.payload,
+                                       width: frame.width,
+                                       height: frame.height,
+                                       timecodeUs: frame.timecodeUs)
+        }
         audio.onPCM = { [weak self] data, samples, ch, rate, ts in
-            self?.bridge.sendAudioPCM(data: data, samples: samples, channels: ch, sampleRate: rate, timestampUs: ts)
+            self?.bridge.sendAudioFLTP(data: data, samples: samples, channels: ch, sampleRate: rate, timecodeUs: ts)
         }
         bridge.onTally = { [weak self] t in self?.tally = t }
 
-        let transport = TransportManager(settings: settings, bridge: bridge, stats: { [weak self] s in self?.stats = s })
+        let transport = TransportManager(settings: settings, bridge: bridge)
         transport.attach()
+        self.transport = transport
 
-        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+        // Статистика раз в секунду из реальных счётчиков энкодера
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.isStreaming {
+                let fps = self.encoder.currentFPS
+                let kbps = self.encoder.currentBitrateKbps * 1000.0
+                let state = self.bridge.isRunning ? "NDI активен" : "NDI восстанавливается…"
+                self.stats = StreamStats(fps: fps, bitrateKbps: kbps, status: state)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        statsTimer = timer
+
+        let stopObserver = NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
             .sink { [weak self] _ in
                 guard let self, self.isStreaming else { return }
                 self.stopStreaming(reason: "Приложение свернуто")
-            }.store(in: &cancellables)
+            }
+        stopObserver.store(in: &cancellables)
     }
 
     func requestPermissions() async -> Bool {
         let cam = await AVCaptureDevice.requestAccess(for: .video)
         let mic = await AVCaptureDevice.requestAccess(for: .audio)
         permissionGranted = cam && mic
+        if !cam { AppLogger.error("Нет доступа к камере — включи в Настройки → Конфиденциальность") }
+        if !mic { AppLogger.warn("Нет доступа к микрофону — звук передаваться не будет") }
         return permissionGranted
     }
 
@@ -142,12 +172,17 @@ final class AppModel: ObservableObject {
     }
 
     func startStreaming() {
-        AppLogger.info("Запуск трансляции: \(settings.ndiName), \(settings.resolution.rawValue)@\(settings.fps), \(Int(settings.bitrateMbps)) Мбит/с, транспорт \(settings.transportMode.rawValue)")
+        guard !isStreaming else { return }
+        guard permissionGranted else {
+            AppLogger.error("Нет разрешений (камера/микрофон) — транслировать нечем")
+            Task { await requestPermissions() }
+            return
+        }
+        AppLogger.info("Запуск трансляции: \(settings.ndiName), \(settings.resolution.rawValue)@\(settings.fps), транспорт \(settings.transportMode.rawValue), ~\(Int(settings.resolution.approxMbps(fps: settings.fps))) Мбит/с")
         if settings.transportMode == .manual, settings.manualIP.isEmpty {
             AppLogger.error("Ручной режим: не указан IP компьютера")
             return
         }
-        // Если выбранная камера недоступна — откатываемся на основную заднюю
         if !AppSettings.CameraSelection.availableCameras.contains(settings.camera) {
             AppLogger.warn("Камера \(settings.camera.rawValue) недоступна — переключаюсь на заднюю")
             settings.camera = .back
@@ -161,32 +196,33 @@ final class AppModel: ObservableObject {
                 AppLogger.info("[stage] аудио запущено")
             }
         } catch {
-            AppLogger.error("Аудио: \(error.localizedDescription)")
+            AppLogger.error("Аудио: \(error.localizedDescription) — продолжаю без звука")
         }
         AppLogger.info("[stage] старт NDI-моста...")
         bridge.start(config: BridgeConfig(settings: settings))
-        AppLogger.info("[stage] NDI-мост запущен, старт видео...")
+        AppLogger.info("[stage] NDI-мост запускается, старт видео...")
         encoder.start(config: EncoderConfig(settings: settings))
         AppLogger.info("[stage] камера стартует...")
         camera.startStream(settings: settings)
         isStreaming = true
         if settings.keepAwake { UIApplication.shared.isIdleTimerDisabled = true }
-        // Принудительный ключевой кадр, чтобы OBS подхватил источник быстро
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.encoder.forceKeyFrame()
-        }
     }
 
     func stopStreaming(reason: String) {
         guard isStreaming else { return }
+        isStreaming = false
         AppLogger.info("Остановка трансляции: \(reason)")
         camera.stopStream()
         encoder.stop()
         audio.stop()
         bridge.stop()
-        isStreaming = false
         tally = .none
         stats = StreamStats()
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    deinit {
+        statsTimer?.invalidate()
+        transport?.detach()
     }
 }
