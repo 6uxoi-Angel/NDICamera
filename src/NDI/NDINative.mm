@@ -13,7 +13,8 @@
 //    жил только внутри dispatch-блока и освобождался (страницы unmap) раньше —
 //    рабочий поток NDI читал/писал уже невалидную память → SIGSEGV
 //    (в крэш-логе: запись сразу за границей MALLOC_SMALL-региона).
-//    Теперь буфер последнего кадра удерживается сильной ссылкой (_heldPayload)
+//    Теперь буфер последнего кадра удерживается пулом сильных ссылок
+//    (_heldBuffers) — см. комментарий у ivar'ов.
 //    ровно столько, сколько требует контракт SDK.
 //
 // 2) Указатель отправителя читался из потока камеры и мог «пережить»
@@ -35,7 +36,20 @@
     dispatch_queue_t _sendQueue;
     NSString *_sourceName;
     NSString *_lastErrorMessage;
-    NSData *_heldPayload;       // буфер последнего async-кадра (контракт SDK)
+
+    // ВАЖНО: структуры кадров живут в ivar'ах, а не на стеке dispatch-блока.
+    // Контракт async-отправки: память, адресуемая через NDIlib_video_frame_t,
+    // не может быть освобождена/переиспользована до синхронизирующего события
+    // (следующий send/destroy). Блочный стек после возврата из блока доступен
+    // системе и перезаписывается — SDK (поток ndis:async) успевал прочитать
+    // уже мусорную структуру → SIGSEGV (KERN_INVALID_ADDRESS).
+    NDIlib_video_frame_v2_t _videoFrame;
+    NDIlib_audio_frame_v3_t _audioFrame;
+
+    // Пул сильных ссылок на буферы, переданные в SDK (видео + аудио):
+    // SDK читает их асинхронно; последние N удерживаются, чтобы даже при
+    // небольшом отставании сетевого воркера память не освобождалась раньше.
+    NSMutableArray *_heldBuffers;
     int _fpsN;
     int _fpsD;
     std::atomic<long long> _videoSent;
@@ -54,6 +68,7 @@
         _fpsD = 1000;
         _videoSent.store(0);
         _droppedVideo.store(0);
+        _heldBuffers = [NSMutableArray new];
     }
     return self;
 }
@@ -135,7 +150,7 @@ static BOOL gNDIInitOK = NO;
             NDIlib_send_destroy(self->_sender);
             self->_sender = NULL;
         }
-        self->_heldPayload = nil;   // буфер больше не нужен SDK
+        [self->_heldBuffers removeAllObjects];   // буферы больше не нужны SDK
         self->_open = NO;
     });
 }
@@ -160,23 +175,27 @@ static BOOL gNDIInitOK = NO;
         // Перепроверка состояния НА ОЧЕРЕДИ: close() может уже отработать —
         // тогда _open==NO и отправлять некуда (раньше здесь был UAF).
         if (!self->_open || !self->_sender) return;
-        NDIlib_video_frame_v2_t v;
-        memset(&v, 0, sizeof(v));
-        v.xres = width;
-        v.yres = height;
-        v.frame_rate_N = self->_fpsN;
-        v.frame_rate_D = self->_fpsD;
-        v.FourCC = NDIlib_FourCC_video_type_NV12;
-        v.picture_aspect_ratio = (float)width / (float)height;
-        v.frame_format_type = NDIlib_frame_format_type_progressive;
-        v.timecode = timecodeUs;               // 100 нс от unix-эпохи (НЕ timestamp!)
-        v.p_data = (uint8_t*)strongPayload.bytes;
-        v.line_stride_in_bytes = width;        // NV12 плотно: строка Y = width байт
-        v.p_metadata = NULL;
-        // Контракт async-send: буфер должен жить до СЛЕДУЮЩЕГО вызова/destroy.
-        // Держим его в _heldPayload — OS не сможет освободить память.
-        self->_heldPayload = strongPayload;
-        NDIlib_send_send_video_async_v2(self->_sender, &v);
+        NDIlib_video_frame_v2_t *v = &self->_videoFrame;   // не стек блока!
+        memset(v, 0, sizeof(*v));
+        v->xres = width;
+        v->yres = height;
+        v->frame_rate_N = self->_fpsN;
+        v->frame_rate_D = self->_fpsD;
+        v->FourCC = NDIlib_FourCC_video_type_NV12;
+        v->picture_aspect_ratio = (float)width / (float)height;
+        v->frame_format_type = NDIlib_frame_format_type_progressive;
+        v->timecode = timecodeUs;               // 100 нс от unix-эпохи (НЕ timestamp!)
+        v->p_data = (uint8_t*)strongPayload.bytes;
+        v->line_stride_in_bytes = width;        // NV12 плотно: строка Y = width байт
+        v->p_metadata = NULL;
+        // Контракт async-send: p_data должен жить до следующего send/destroy.
+        // Пул сильных ссылок удерживает буферы, даже если сетевой воркер
+        // SDK отстаёт более чем на один кадр.
+        [self->_heldBuffers addObject:strongPayload];
+        if (self->_heldBuffers.count > 16) {
+            [self->_heldBuffers removeObjectAtIndex:0];
+        }
+        NDIlib_send_send_video_async_v2(self->_sender, v);
         self->_videoSent.fetch_add(1);
     });
 }
@@ -191,17 +210,22 @@ static BOOL gNDIInitOK = NO;
     NSData *strongAudio = fltp;
     dispatch_barrier_async(_sendQueue, ^{
         if (!self->_open || !self->_sender) return;
-        NDIlib_audio_frame_v3_t a;
-        memset(&a, 0, sizeof(a));
-        a.sample_rate = sampleRate;
-        a.no_channels = channels;
-        a.no_samples = noSamples;
-        a.timecode = timecodeUs;
-        a.FourCC = NDIlib_FourCC_audio_type_FLTP;
-        a.p_data = (uint8_t*)strongAudio.bytes;
-        a.channel_stride_in_bytes = noSamples * 4;
-        a.p_metadata = NULL;
-        NDIlib_send_send_audio_v3(self->_sender, &a);   // синхронная: копирует сразу
+        NDIlib_audio_frame_v3_t *a = &self->_audioFrame;   // не стек блока!
+        memset(a, 0, sizeof(*a));
+        a->sample_rate = sampleRate;
+        a->no_channels = channels;
+        a->no_samples = noSamples;
+        a->timecode = timecodeUs;
+        a->FourCC = NDIlib_FourCC_audio_type_FLTP;
+        a->p_data = (uint8_t*)strongAudio.bytes;
+        a->channel_stride_in_bytes = noSamples * 4;
+        a->p_metadata = NULL;
+        // Пул удержания — см. sendVideoNV12.
+        [self->_heldBuffers addObject:strongAudio];
+        if (self->_heldBuffers.count > 16) {
+            [self->_heldBuffers removeObjectAtIndex:0];
+        }
+        NDIlib_send_send_audio_v3(self->_sender, a);   // синхронная: копирует сразу
     });
 }
 

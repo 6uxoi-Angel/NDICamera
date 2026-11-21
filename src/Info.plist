@@ -24,6 +24,13 @@
     <string>Камера используется для передачи видео в OBS по NDI.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Микрофон используется для передачи звука в OBS по NDI.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Доступ к локальной сети нужен для обнаружения и передачи по NDI в OBS (mDNS/DistroAV).</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_ndi._tcp</string>
+        <string>_ndi._udp</string>
+    </array>
     <key>UIBackgroundModes</key>
     <array/>
     <key>UILaunchScreen</key>

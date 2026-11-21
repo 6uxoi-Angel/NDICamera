@@ -34,6 +34,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_KEY_NSCameraUsageDescription: "Камера используется для передачи видео в OBS по NDI."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Микрофон используется для передачи звука в OBS по NDI."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Доступ к локальной сети нужен для обнаружения и передачи по NDI в OBS (mDNS/DistroAV)."
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         OTHER_LDFLAGS: [ "$(inherited)", "-ObjC", "-lndi_ios", "-framework", "VideoToolbox", "-framework", "AVFoundation", "-framework", "Accelerate", "-framework", "Security" ]
