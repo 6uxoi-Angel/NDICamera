@@ -26,7 +26,7 @@ final class TransportManager {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             let interfaces = path.availableInterfaces.map(\.name).sorted()
-            let signature = "\(path.status.rawValue):\(interfaces.joined(separator: ","))"
+            let signature = "\(path.status):\(interfaces.joined(separator: ","))"
             // Первый вызов — просто запоминаем состояние, reconnect не нужен
             guard let previous = self.lastSignature else {
                 self.lastSignature = signature

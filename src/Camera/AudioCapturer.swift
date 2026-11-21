@@ -70,9 +70,8 @@ final class AudioCapturer {
         data.withUnsafeMutableBytes { raw in
             guard let base = raw.bindMemory(to: Float.self).baseAddress else { return }
             for ch in 0..<chCount {
-                if let src = channelData[ch] {
-                    memcpy(base + ch * frameLen, src, bytesPerChannel)
-                }
+                let src = channelData[ch]
+                memcpy(base + ch * frameLen, src, bytesPerChannel)
             }
         }
         let timecodeUs = UInt64((CFAbsoluteTimeGetCurrent() + 978307200) * 1e7)

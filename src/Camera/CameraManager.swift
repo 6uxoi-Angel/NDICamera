@@ -183,15 +183,14 @@ final class CameraManager: NSObject, ObservableObject {
             AppLogger.info("Нет сохранённых настроек — конфигурация при старте")
             return
         }
-        var changed = settings
-        changed.camera = position
-        lastSettings = changed
+        // AppSettings — класс: мутация через использованную ссылку меняет и модель.
+        settings.camera = position
+        lastSettings = settings
         let wasRunning = session.isRunning
         if wasRunning { session.stopRunning() }
-        configure(settings: changed)
+        configure(settings: settings)
         if wasRunning { session.startRunning() }
     }
-
     private func device(for position: AppSettings.CameraSelection) -> AVCaptureDevice? {
         switch position {
         case .front:
@@ -213,14 +212,15 @@ final class CameraManager: NSObject, ObservableObject {
         case .portraitUpsideDown: angle = 270
         case .landscapeLeft: angle = 180
         case .landscapeRight: angle = 0
+        case .unknown: angle = 90
         @unknown default: angle = 90
         }
         if camera == .front, connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
-            connection.videoMirrored = true
+            connection.isVideoMirrored = true
         } else if connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
-            connection.videoMirrored = false
+            connection.isVideoMirrored = false
         }
         if connection.isVideoRotationAngleSupported(angle) {
             connection.videoRotationAngle = angle
