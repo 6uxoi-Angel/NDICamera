@@ -2,7 +2,7 @@
 // ---- NDI SDK (v6) ----
 // Заголовки SDK лежат в NDISDK/include (см. README)
 #import <Processing.NDI.Lib.h>
-#import <Processing.NDI.Structs.h>
+#import <Processing.NDI.structs.h>
 #import <pthread.h>
 #include <atomic>
 
@@ -90,13 +90,14 @@ static BOOL gNDIInitOK = NO;
             self->_lastErrorMessage = @"NDIlib_initialize() вернул false (лицензия/архитектура)";
             result = NO; return;
         }
-        if (!name.length) name = @"iPhoneCamera";
-        self->_sourceName = [name copy];
+        NSString *effectiveName = name;
+        if (!effectiveName.length) effectiveName = @"iPhoneCamera";
+        self->_sourceName = [effectiveName copy];
         self->_fpsN = fpsN > 0 ? fpsN : 30000;
         self->_fpsD = fpsD > 0 ? fpsD : 1000;
         NDIlib_send_create_t create;
         memset(&create, 0, sizeof(create));
-        create.p_ndi_name = [self->_sourceName UTF8String];
+        create.p_ndi_name = [effectiveName UTF8String];
         create.p_groups = NULL;
         create.clock_video = true;
         create.clock_audio = true;
@@ -112,13 +113,13 @@ static BOOL gNDIInitOK = NO;
         memset(&rc, 0, sizeof(rc));
         NDIlib_source_t src;
         memset(&src, 0, sizeof(src));
-        src.p_ndi_name = [self->_sourceName UTF8String];
+        src.p_ndi_name = [effectiveName UTF8String];
         src.p_url_address = NULL;   // SDK сам найдёт источник по discovery
         rc.source_to_connect_to = src;
         rc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
         rc.bandwidth = NDIlib_recv_bandwidth_metadata_only;
         rc.allow_video_fields = false;
-        rc.p_ndi_recv_name = [self->_sourceName UTF8String];
+        rc.p_ndi_recv_name = [effectiveName UTF8String];
         self->_tallyRecv = NDIlib_recv_create_v3(&rc);   // NULL не фатален
         self->_lastErrorMessage = @"";
         self->_open = YES;
@@ -176,7 +177,7 @@ static BOOL gNDIInitOK = NO;
         // Держим его в _heldPayload — OS не сможет освободить память.
         self->_heldPayload = strongPayload;
         NDIlib_send_send_video_async_v2(self->_sender, &v);
-        _videoSent.fetch_add(1);
+        self->_videoSent.fetch_add(1);
     });
 }
 
